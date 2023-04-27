@@ -1,8 +1,8 @@
 ---
-title: Bark With Voice Cloning
-emoji: 🌍
+title: Bark with Voice Cloning
+emoji: 📊
 colorFrom: purple
-colorTo: green
+colorTo: purple
 sdk: gradio
 sdk_version: 3.27.0
 app_file: app.py
