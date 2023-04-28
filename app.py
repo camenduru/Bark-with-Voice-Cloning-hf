@@ -193,14 +193,7 @@ for lang, code in SUPPORTED_LANGS:
     for n in range(10):
         speakers_list.append(f"{code}_speaker_{n}")
 
-examples1 = [
-
-    ["Hello, my name is Suno. And, uh — and I like pizza. [laughs] But I also have other interests such as playing tic tac toe.",
-        "Speaker 1 (en)", 0.7, 0.7]
-
-]
-
-examples2 = [["test.wav", "Bark.wav", "Bark.wav"]]
+examples1 = [["reference.wav", "Bark.wav", "Bark.wav"]]
 
 with gr.Blocks() as demo:
     gr.Markdown(
@@ -248,9 +241,7 @@ with gr.Blocks() as demo:
 
     btn.click(voice_conversion, [inp5, inp6, inp7], [out2])
 
-#    gr.Examples(examples=examples1, fn=generate_text_to_speech, inputs=[inp1, inp2, inp3, inp4],
-#                outputs=[out1], cache_examples=True)
-    gr.Examples(examples=examples2, fn=voice_conversion, inputs=[inp5, inp6, inp7],
+    gr.Examples(examples=examples1, fn=voice_conversion, inputs=[inp5, inp6, inp7],
                 outputs=[out2], cache_examples=True)
     
     gr.Markdown(
