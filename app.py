@@ -262,6 +262,7 @@ with gr.Blocks() as demo:
     )
     gr.Markdown(
             """ 
+### 😄 - You may also apply [VoiceFixer](https://huggingface.co/spaces/Kevin676/VoiceFixer) to the generated audio in order to enhance the speech.
 ## 🌎 Foreign Language
 Bark supports various languages out-of-the-box and automatically determines language from input text. \
 When prompted with code-switched text, Bark will even attempt to employ the native accent for the respective languages in the same voice.
