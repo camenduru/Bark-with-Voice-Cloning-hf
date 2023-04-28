@@ -2,3 +2,4 @@ git+https://github.com/Edresson/Coqui-TTS@multilingual-torchaudio-SE
 torchaudio
 pydub 
 ffmpeg-normalize==1.21.0
+speechbrain
