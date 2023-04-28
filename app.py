@@ -22,6 +22,14 @@ import numpy as np
 # from IPython.display import Audio
 
 import torch
+import torchaudio
+from speechbrain.pretrained import SpectralMaskEnhancement
+
+enhance_model = SpectralMaskEnhancement.from_hparams(
+source="speechbrain/metricgan-plus-voicebank",
+savedir="pretrained_models/metricgan-plus-voicebank",
+run_opts={"device":"cuda"},
+)
 
 from TTS.tts.utils.synthesis import synthesis
 from TTS.tts.utils.text.symbols import make_symbols, phonemes, symbols
@@ -163,7 +171,14 @@ def voice_conversion(ta, ra, da):
   # print("Reference Audio after decoder:")
   # IPython.display.display(Audio(ref_wav_voc, rate=ap.sample_rate))
 
-  return (ap.sample_rate, ref_wav_voc)
+  noisy = enhance_model.load_audio(
+  ref_wav_voc
+  ).unsqueeze(0)
+
+  enhanced = enhance_model.enhance_batch(noisy, lengths=torch.tensor([1.]))
+  torchaudio.save("enhanced.wav", enhanced.cpu(), 16000)
+
+  return "enhanced.wav"
 
 
 def generate_text_to_speech(text_prompt, selected_speaker, text_temp, waveform_temp):
