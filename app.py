@@ -231,7 +231,7 @@ with gr.Blocks() as demo:
     
    
     with gr.Row().style(equal_height=True):
-        inp5 = gr.Audio(label="Reference Audio for Voice Cloning")
+        inp5 = gr.Audio(label="Upload Reference Audio for Voice Cloning Here")
         inp6 = out1
         inp7 = out1
 
