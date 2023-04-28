@@ -1,6 +1,6 @@
 import os
 
-os.system("pip install git+https://github.com/suno-ai/bark.git")
+#os.system("pip install git+https://github.com/suno-ai/bark.git")
 
 from bark.generation import SUPPORTED_LANGS
 from bark import SAMPLE_RATE, generate_audio
