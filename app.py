@@ -248,8 +248,8 @@ with gr.Blocks() as demo:
 
     btn.click(voice_conversion, [inp5, inp6, inp7], [out2])
 
-    gr.Examples(examples=examples1, fn=generate_text_to_speech, inputs=[inp1, inp2, inp3, inp4],
-                outputs=[out1], cache_examples=True)
+#    gr.Examples(examples=examples1, fn=generate_text_to_speech, inputs=[inp1, inp2, inp3, inp4],
+#                outputs=[out1], cache_examples=True)
     gr.Examples(examples=examples2, fn=voice_conversion, inputs=[inp5, inp6, inp7],
                 outputs=[out2], cache_examples=True)
     
