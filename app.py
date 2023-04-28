@@ -193,7 +193,7 @@ for lang, code in SUPPORTED_LANGS:
     for n in range(10):
         speakers_list.append(f"{code}_speaker_{n}")
 
-examples1 = [["reference.wav", "Bark.wav", "Bark.wav"]]
+examples1 = [["ref.wav", "Bark.wav", "Bark.wav"]]
 
 with gr.Blocks() as demo:
     gr.Markdown(
