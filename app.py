@@ -1,313 +1,397 @@
-import os
-
-#os.system("pip install git+https://github.com/suno-ai/bark.git")
-
-from bark.generation import SUPPORTED_LANGS
-from bark import SAMPLE_RATE, generate_audio
-from scipy.io.wavfile import write as write_wav
-from datetime import datetime
-
-import shutil
+from cProfile import label
+import dataclasses
+from distutils.command.check import check
+from doctest import Example
 import gradio as gr
-
+import os
 import sys
-
-import string
-import time
-import argparse
-import json
-
 import numpy as np
-# import IPython
-# from IPython.display import Audio
-
+import logging
 import torch
+import pytorch_seed
+import time
 
-from TTS.tts.utils.synthesis import synthesis
-from TTS.tts.utils.text.symbols import make_symbols, phonemes, symbols
-try:
-  from TTS.utils.audio import AudioProcessor
-except:
-  from TTS.utils.audio import AudioProcessor
+from xml.sax import saxutils
+from bark.api import generate_with_settings
+from bark.api import save_as_prompt
+from util.settings import Settings
+#import nltk
 
+from bark import SAMPLE_RATE
+from cloning.clonevoice import clone_voice
+from bark.generation import SAMPLE_RATE, preload_models, _load_history_prompt, codec_decode
+from scipy.io.wavfile import write as write_wav
+from util.parseinput import split_and_recombine_text, build_ssml, is_ssml, create_clips_from_ssml
+from datetime import datetime
+from tqdm.auto import tqdm
+from util.helper import create_filename, add_id3_tag
+from swap_voice import swap_voice_from_audio
+from training.training_prepare import prepare_semantics_from_text, prepare_wavs_from_semantics
+from training.train import training_prepare_files, train
 
-from TTS.tts.models import setup_model
-from TTS.config import load_config
-from TTS.tts.models.vits import *
-
-from TTS.tts.utils.speakers import SpeakerManager
-from pydub import AudioSegment
-
-# from google.colab import files
-import librosa
-
-from scipy.io.wavfile import write, read
-
-import subprocess
-
-'''
-from google.colab import drive
-drive.mount('/content/drive')
-src_path = os.path.join(os.path.join(os.path.join(os.path.join(os.getcwd(), 'drive'), 'MyDrive'), 'Colab Notebooks'), 'best_model_latest.pth.tar')
-dst_path = os.path.join(os.getcwd(), 'best_model.pth.tar')
-shutil.copy(src_path, dst_path)
-'''
-
-TTS_PATH = "TTS/"
-
-# add libraries into environment
-sys.path.append(TTS_PATH) # set this if TTS is not installed globally
-
-# Paths definition
-
-OUT_PATH = 'out/'
-
-# create output path
-os.makedirs(OUT_PATH, exist_ok=True)
-
-# model vars 
-MODEL_PATH = 'best_model.pth.tar'
-CONFIG_PATH = 'config.json'
-TTS_LANGUAGES = "language_ids.json"
-TTS_SPEAKERS = "speakers.json"
-USE_CUDA = torch.cuda.is_available()
-
-# load the config
-C = load_config(CONFIG_PATH)
-
-# load the audio processor
-ap = AudioProcessor(**C.audio)
-
-speaker_embedding = None
-
-C.model_args['d_vector_file'] = TTS_SPEAKERS
-C.model_args['use_speaker_encoder_as_loss'] = False
-
-model = setup_model(C)
-model.language_manager.set_language_ids_from_file(TTS_LANGUAGES)
-# print(model.language_manager.num_languages, model.embedded_language_dim)
-# print(model.emb_l)
-cp = torch.load(MODEL_PATH, map_location=torch.device('cpu'))
-# remove speaker encoder
-model_weights = cp['model'].copy()
-for key in list(model_weights.keys()):
-  if "speaker_encoder" in key:
-    del model_weights[key]
-
-model.load_state_dict(model_weights)
-
-model.eval()
-
-if USE_CUDA:
-    model = model.cuda()
-
-# synthesize voice
-use_griffin_lim = False
-
-# Paths definition
-
-CONFIG_SE_PATH = "config_se.json"
-CHECKPOINT_SE_PATH = "SE_checkpoint.pth.tar"
-
-# Load the Speaker encoder
-
-SE_speaker_manager = SpeakerManager(encoder_model_path=CHECKPOINT_SE_PATH, encoder_config_path=CONFIG_SE_PATH, use_cuda=USE_CUDA)
-
-# Define helper function
-
-def compute_spec(ref_file):
-  y, sr = librosa.load(ref_file, sr=ap.sample_rate)
-  spec = ap.spectrogram(y)
-  spec = torch.FloatTensor(spec).unsqueeze(0)
-  return spec
+settings = Settings('config.yaml')
 
 
-def voice_conversion(ta, ra, da):
+def generate_text_to_speech(text, selected_speaker, text_temp, waveform_temp, eos_prob, quick_generation, complete_settings, seed, batchcount, progress=gr.Progress(track_tqdm=True)):
+    # Chunk the text into smaller pieces then combine the generated audio
 
-  target_audio = 'target.wav'
-  reference_audio = 'reference.wav'
-  driving_audio = 'driving.wav'
+    # generation settings
+    if selected_speaker == 'None':
+        selected_speaker = None
 
-  write(target_audio, ta[0], ta[1])
-  write(reference_audio, ra[0], ra[1])
-  write(driving_audio, da[0], da[1])          
+    voice_name = selected_speaker
 
-  # !ffmpeg-normalize $target_audio -nt rms -t=-27 -o $target_audio -ar 16000 -f
-  # !ffmpeg-normalize $reference_audio -nt rms -t=-27 -o $reference_audio -ar 16000 -f
-  # !ffmpeg-normalize $driving_audio -nt rms -t=-27 -o $driving_audio -ar 16000 -f
+    if text == None or len(text) < 1:
+       if selected_speaker == None:
+            raise gr.Error('No text entered!')
 
-  files = [target_audio, reference_audio, driving_audio]
+       # Extract audio data from speaker if no text and speaker selected
+       voicedata = _load_history_prompt(voice_name)
+       audio_arr = codec_decode(voicedata["fine_prompt"])
+       result = create_filename(settings.output_folder_path, "None", "extract",".wav")
+       save_wav(audio_arr, result)
+       return result
 
-  for file in files:
-      subprocess.run(["ffmpeg-normalize", file, "-nt", "rms", "-t=-27", "-o", file, "-ar", "16000", "-f"])
-
-  # ta_ = read(target_audio)
-
-  target_emb = SE_speaker_manager.compute_d_vector_from_clip([target_audio])
-  target_emb = torch.FloatTensor(target_emb).unsqueeze(0)
-
-  driving_emb = SE_speaker_manager.compute_d_vector_from_clip([reference_audio])
-  driving_emb = torch.FloatTensor(driving_emb).unsqueeze(0)
-
-  # Convert the voice
-
-  driving_spec = compute_spec(driving_audio)
-  y_lengths = torch.tensor([driving_spec.size(-1)])
-  if USE_CUDA:
-      ref_wav_voc, _, _ = model.voice_conversion(driving_spec.cuda(), y_lengths.cuda(), driving_emb.cuda(), target_emb.cuda())
-      ref_wav_voc = ref_wav_voc.squeeze().cpu().detach().numpy()
-  else:
-      ref_wav_voc, _, _ = model.voice_conversion(driving_spec, y_lengths, driving_emb, target_emb)
-      ref_wav_voc = ref_wav_voc.squeeze().detach().numpy()
-
-  # print("Reference Audio after decoder:")
-  # IPython.display.display(Audio(ref_wav_voc, rate=ap.sample_rate))
-
-  return (ap.sample_rate, ref_wav_voc)
-
-def generate_text_to_speech(text_prompt, selected_speaker, text_temp, waveform_temp):
-    audio_array = generate_audio(text_prompt, selected_speaker, text_temp, waveform_temp)
-
-    now = datetime.now()
-    date_str = now.strftime("%m-%d-%Y")
-    time_str = now.strftime("%H-%M-%S")
-
-    outputs_folder = os.path.join(os.getcwd(), "outputs")
-    if not os.path.exists(outputs_folder):
-        os.makedirs(outputs_folder)
-
-    sub_folder = os.path.join(outputs_folder, date_str)
-    if not os.path.exists(sub_folder):
-        os.makedirs(sub_folder)
-
-    file_name = f"audio_{time_str}.wav"
-    file_path = os.path.join(sub_folder, file_name)
-    write_wav(file_path, SAMPLE_RATE, audio_array)
-
-    return file_path
+    if batchcount < 1:
+        batchcount = 1
 
 
-speakers_list = []
+    silenceshort = np.zeros(int((float(settings.silence_sentence) / 1000.0) * SAMPLE_RATE), dtype=np.int16)  # quarter second of silence
+    silencelong = np.zeros(int((float(settings.silence_speakers) / 1000.0) * SAMPLE_RATE), dtype=np.float32)  # half a second of silence
+    use_last_generation_as_history = "Use last generation as history" in complete_settings
+    save_last_generation = "Save generation as Voice" in complete_settings
+    for l in range(batchcount):
+        currentseed = seed
+        if seed != None and seed > 2**32 - 1:
+            logger.warning(f"Seed {seed} > 2**32 - 1 (max), setting to random")
+            currentseed = None
+        if currentseed == None or currentseed <= 0:
+            currentseed = np.random.default_rng().integers(1, 2**32 - 1)
+        assert(0 < currentseed and currentseed < 2**32)
 
-for lang, code in SUPPORTED_LANGS:
-    for n in range(10):
-        speakers_list.append(f"{code}_speaker_{n}")
+        progress(0, desc="Generating")
 
-examples1 = [["ref.wav", "Bark.wav", "Bark.wav"]]
+        full_generation = None
 
-with gr.Blocks() as demo:
-    gr.Markdown(
-            f""" # <center>🐶🎶🥳 - Bark with Voice Cloning</center>
-            
-            ### <center>🤗 - Powered by [Bark](https://huggingface.co/spaces/suno/bark) and [YourTTS](https://github.com/Edresson/YourTTS). Inspired by [bark-webui](https://github.com/makawy7/bark-webui).</center>
-            1. You can duplicate and use it with a GPU: <a href="https://huggingface.co/spaces/{os.getenv('SPACE_ID')}?duplicate=true"><img style="display: inline; margin-top: 0em; margin-bottom: 0em" src="https://bit.ly/3gLdBN6" alt="Duplicate Space" /></a>
-            2. First use Bark to generate audio from text and then use YourTTS to get new audio in a custom voice you like. Easy to use!
-            3. For voice cloning, longer reference audio (~90s) will generally lead to better quality of the cloned speech. Also, please make sure the input audio generated by Bark is not too short.
-        """
+        all_parts = []
+        complete_text = ""
+        text = text.lstrip()
+        if is_ssml(text):
+            list_speak = create_clips_from_ssml(text)
+            prev_speaker = None
+            for i, clip in tqdm(enumerate(list_speak), total=len(list_speak)):
+                selected_speaker = clip[0]
+                # Add pause break between speakers
+                if i > 0 and selected_speaker != prev_speaker:
+                    all_parts += [silencelong.copy()]
+                prev_speaker = selected_speaker
+                text = clip[1]
+                text = saxutils.unescape(text)
+                if selected_speaker == "None":
+                    selected_speaker = None
+
+                print(f"\nGenerating Text ({i+1}/{len(list_speak)}) -> {selected_speaker} (Seed {currentseed}):`{text}`")
+                complete_text += text
+                with pytorch_seed.SavedRNG(currentseed):
+                    audio_array = generate_with_settings(text_prompt=text, voice_name=selected_speaker, semantic_temp=text_temp, coarse_temp=waveform_temp, eos_p=eos_prob)
+                    currentseed = torch.random.initial_seed()
+                if len(list_speak) > 1:
+                    filename = create_filename(settings.output_folder_path, currentseed, "audioclip",".wav")
+                    save_wav(audio_array, filename)
+                    add_id3_tag(filename, text, selected_speaker, currentseed)
+
+                all_parts += [audio_array]
+        else:
+            texts = split_and_recombine_text(text, settings.input_text_desired_length, settings.input_text_max_length)
+            for i, text in tqdm(enumerate(texts), total=len(texts)):
+                print(f"\nGenerating Text ({i+1}/{len(texts)}) -> {selected_speaker} (Seed {currentseed}):`{text}`")
+                complete_text += text
+                if quick_generation == True:
+                    with pytorch_seed.SavedRNG(currentseed):
+                        audio_array = generate_with_settings(text_prompt=text, voice_name=selected_speaker, semantic_temp=text_temp, coarse_temp=waveform_temp, eos_p=eos_prob)
+                        currentseed = torch.random.initial_seed()
+                else:
+                    full_output = use_last_generation_as_history or save_last_generation
+                    if full_output:
+                        full_generation, audio_array = generate_with_settings(text_prompt=text, voice_name=voice_name, semantic_temp=text_temp, coarse_temp=waveform_temp, eos_p=eos_prob, output_full=True)
+                    else:
+                        audio_array = generate_with_settings(text_prompt=text, voice_name=voice_name, semantic_temp=text_temp, coarse_temp=waveform_temp, eos_p=eos_prob)
+
+                # Noticed this in the HF Demo - convert to 16bit int -32767/32767 - most used audio format  
+                # audio_array = (audio_array * 32767).astype(np.int16)
+
+                if len(texts) > 1:
+                    filename = create_filename(settings.output_folder_path, currentseed, "audioclip",".wav")
+                    save_wav(audio_array, filename)
+                    add_id3_tag(filename, text, selected_speaker, currentseed)
+
+                if quick_generation == False and (save_last_generation == True or use_last_generation_as_history == True):
+                    # save to npz
+                    voice_name = create_filename(settings.output_folder_path, seed, "audioclip", ".npz")
+                    save_as_prompt(voice_name, full_generation)
+                    if use_last_generation_as_history:
+                        selected_speaker = voice_name
+
+                all_parts += [audio_array]
+                # Add short pause between sentences
+                if text[-1] in "!?.\n" and i > 1:
+                    all_parts += [silenceshort.copy()]
+
+        # save & play audio
+        result = create_filename(settings.output_folder_path, currentseed, "final",".wav")
+        save_wav(np.concatenate(all_parts), result)
+        # write id3 tag with text truncated to 60 chars, as a precaution...
+        add_id3_tag(result, complete_text, selected_speaker, currentseed)
+
+    return result
+
+
+
+def save_wav(audio_array, filename):
+    write_wav(filename, SAMPLE_RATE, audio_array)
+
+def save_voice(filename, semantic_prompt, coarse_prompt, fine_prompt):
+    np.savez_compressed(
+        filename,
+        semantic_prompt=semantic_prompt,
+        coarse_prompt=coarse_prompt,
+        fine_prompt=fine_prompt
     )
     
-    with gr.Row().style(equal_height=True):
-        inp1 = gr.Textbox(label="Input Text", lines=4, placeholder="Enter text here...")
 
-        inp3 = gr.Slider(
-            0.1,
-            1.0,
-            value=0.7,
-            label="Generation Temperature",
-            info="1.0 more diverse, 0.1 more conservative",
-        )
+def on_quick_gen_changed(checkbox):
+    if checkbox == False:
+        return gr.CheckboxGroup.update(visible=True)
+    return gr.CheckboxGroup.update(visible=False)
 
-        inp4 = gr.Slider(
-            0.1, 1.0, value=0.7, label="Waveform Temperature", info="1.0 more diverse, 0.1 more conservative"
-        )
-    with gr.Row().style(equal_height=True):
+def delete_output_files(checkbox_state):
+    if checkbox_state:
+        outputs_folder = os.path.join(os.getcwd(), settings.output_folder_path)
+        if os.path.exists(outputs_folder):
+            purgedir(outputs_folder)
+    return False
 
-        inp2 = gr.Dropdown(speakers_list, value=speakers_list[1], label="Acoustic Prompt")
 
-        button = gr.Button("Generate using Bark")
-        
-        out1 = gr.Audio(label="Generated Audio")
+# https://stackoverflow.com/a/54494779
+def purgedir(parent):
+    for root, dirs, files in os.walk(parent):                                      
+        for item in files:
+            # Delete subordinate files                                                 
+            filespec = os.path.join(root, item)
+            os.unlink(filespec)
+        for item in dirs:
+            # Recursively perform this operation for subordinate directories   
+            purgedir(os.path.join(root, item))
+
+def convert_text_to_ssml(text, selected_speaker):
+    return build_ssml(text, selected_speaker)
+
+
+def training_prepare(selected_step, num_text_generations, progress=gr.Progress(track_tqdm=True)):
+    if selected_step == prepare_training_list[0]:
+        prepare_semantics_from_text()
+    else:
+        prepare_wavs_from_semantics()
+    return None
+
+
+def start_training(save_model_epoch, max_epochs, progress=gr.Progress(track_tqdm=True)):
+    training_prepare_files("./training/data/", "./training/data/checkpoint/hubert_base_ls960.pt")
+    train("./training/data/", save_model_epoch, max_epochs)
+    return None
+
+
+
+def apply_settings(themes, input_server_name, input_server_port, input_server_public, input_desired_len, input_max_len, input_silence_break, input_silence_speaker):
+    settings.selected_theme = themes
+    settings.server_name = input_server_name
+    settings.server_port = input_server_port
+    settings.server_share = input_server_public
+    settings.input_text_desired_length = input_desired_len
+    settings.input_text_max_length = input_max_len
+    settings.silence_sentence = input_silence_break
+    settings.silence_speaker = input_silence_speaker
+    settings.save()
+
+def restart():
+    global restart_server
+    restart_server = True
+
+
+def create_version_html():
+    python_version = ".".join([str(x) for x in sys.version_info[0:3]])
+    versions_html = f"""
+python: <span title="{sys.version}">{python_version}</span>
+ • 
+torch: {getattr(torch, '__long_version__',torch.__version__)}
+ • 
+gradio: {gr.__version__}
+"""
+    return versions_html
+
     
-    button.click(generate_text_to_speech, [inp1, inp2, inp3, inp4], [out1])
-    
+
+logger = logging.getLogger(__name__)
+APPTITLE = "Bark Voice Cloning UI"
+
+
+autolaunch = False
+
+if len(sys.argv) > 1:
+    autolaunch = "-autolaunch" in sys.argv
+
+
+if torch.cuda.is_available() == False:
+    os.environ['BARK_FORCE_CPU'] = 'True'
+    logger.warning("No CUDA detected, fallback to CPU!")
+
+print(f'smallmodels={os.environ.get("SUNO_USE_SMALL_MODELS", False)}')
+print(f'enablemps={os.environ.get("SUNO_ENABLE_MPS", False)}')
+print(f'offloadcpu={os.environ.get("SUNO_OFFLOAD_CPU", False)}')
+print(f'forcecpu={os.environ.get("BARK_FORCE_CPU", False)}')
+print(f'autolaunch={autolaunch}\n\n')
+
+#print("Updating nltk\n")
+#nltk.download('punkt')
+
+print("Preloading Models\n")
+preload_models()
+
+available_themes = ["Default", "gradio/glass", "gradio/monochrome", "gradio/seafoam", "gradio/soft", "gstaff/xkcd", "freddyaboulton/dracula_revamped", "ysharma/steampunk"]
+tokenizer_language_list = ["de","en", "pl"]
+prepare_training_list = ["Step 1: Semantics from Text","Step 2: WAV from Semantics"]
+
+seed = -1
+server_name = settings.server_name
+if len(server_name) < 1:
+    server_name = None
+server_port = settings.server_port
+if server_port <= 0:
+    server_port = None
+global run_server
+global restart_server
+
+run_server = True
+
+while run_server:
+    # Collect all existing speakers/voices in dir
+    speakers_list = []
+
+    for root, dirs, files in os.walk("./bark/assets/prompts"):
+        for file in files:
+            if file.endswith(".npz"):
+                pathpart = root.replace("./bark/assets/prompts", "")
+                name = os.path.join(pathpart, file[:-4])
+                if name.startswith("/") or name.startswith("\\"):
+                     name = name[1:]
+                speakers_list.append(name)
+
+    speakers_list = sorted(speakers_list, key=lambda x: x.lower())
+    speakers_list.insert(0, 'None')
+
+    print(f'Launching {APPTITLE} Server')
+
+    # Create Gradio Blocks
+
+    with gr.Blocks(title=f"{APPTITLE}", mode=f"{APPTITLE}", theme=settings.selected_theme) as barkgui:
+        gr.Markdown("# <center>🐶🎶⭐ - Bark Voice Cloning</center>")
+        gr.Markdown("### <center>🤗 - If you like this space, please star my [github repo](https://github.com/KevinWang676/Bark-Voice-Cloning)</center>")
+        gr.Markdown("### <center>🎡 - Based on [bark-gui](https://github.com/C0untFloyd/bark-gui)</center>")
+        gr.Markdown(f""" You can duplicate and use it with a GPU: <a href="https://huggingface.co/spaces/{os.getenv('SPACE_ID')}?duplicate=true"><img style="display: inline; margin-top: 0em; margin-bottom: 0em" src="https://bit.ly/3gLdBN6" alt="Duplicate Space" /></a>
+                         or open in [Colab](https://colab.research.google.com/github/KevinWang676/Bark-Voice-Cloning/blob/main/Bark_Voice_Cloning_UI.ipynb) for quick start 🌟
+                    """)
+
+        with gr.Tab("🎙️ - Clone Voice"):
+            with gr.Row():
+                input_audio_filename = gr.Audio(label="Input audio.wav", source="upload", type="filepath")
+            #transcription_text = gr.Textbox(label="Transcription Text", lines=1, placeholder="Enter Text of your Audio Sample here...")
+            with gr.Row():
+                with gr.Column():
+                    initialname = "/home/user/app/bark/assets/prompts/file"
+                    output_voice = gr.Textbox(label="Filename of trained Voice (do not change the initial name)", lines=1, placeholder=initialname, value=initialname, visible=False)
+                with gr.Column():
+                    tokenizerlang = gr.Dropdown(tokenizer_language_list, label="Base Language Tokenizer", value=tokenizer_language_list[1], visible=False)
+            with gr.Row():
+                clone_voice_button = gr.Button("Create Voice", variant="primary")
+            with gr.Row():
+                dummy = gr.Text(label="Progress")
+                npz_file = gr.File(label=".npz file")
+            speakers_list.insert(0, npz_file) # add prompt
+
+        with gr.Tab("🎵 - TTS"):
+            with gr.Row():
+                with gr.Column():
+                    placeholder = "Enter text here."
+                    input_text = gr.Textbox(label="Input Text", lines=4, placeholder=placeholder)
+                    convert_to_ssml_button = gr.Button("Convert Input Text to SSML")
+                with gr.Column():
+                        seedcomponent = gr.Number(label="Seed (default -1 = Random)", precision=0, value=-1)
+                        batchcount = gr.Number(label="Batch count", precision=0, value=1)
+           
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("[Voice Prompt Library](https://suno-ai.notion.site/8b8e8749ed514b0cbf3f699013548683?v=bc67cff786b04b50b3ceb756fd05f68c)")
+                    speaker = gr.Dropdown(speakers_list, value=speakers_list[0], label="Voice (Choose “file” if you wanna use the custom voice)")
+                    
+                with gr.Column():
+                    text_temp = gr.Slider(0.1, 1.0, value=0.6, label="Generation Temperature", info="1.0 more diverse, 0.1 more conservative")
+                    waveform_temp = gr.Slider(0.1, 1.0, value=0.7, label="Waveform temperature", info="1.0 more diverse, 0.1 more conservative")
+
+            with gr.Row():
+                with gr.Column():
+                    quick_gen_checkbox = gr.Checkbox(label="Quick Generation", value=True)
+                    settings_checkboxes = ["Use last generation as history", "Save generation as Voice"]
+                    complete_settings = gr.CheckboxGroup(choices=settings_checkboxes, value=settings_checkboxes, label="Detailed Generation Settings", type="value", interactive=True, visible=False)
+                with gr.Column():
+                    eos_prob = gr.Slider(0.0, 0.5, value=0.05, label="End of sentence probability")
+
+            with gr.Row():
+                with gr.Column():
+                    tts_create_button = gr.Button("Generate", variant="primary")
+                with gr.Column():
+                    hidden_checkbox = gr.Checkbox(visible=False)
+                    button_stop_generation = gr.Button("Stop generation")
+            with gr.Row():
+                output_audio = gr.Audio(label="Generated Audio", type="filepath")
+
+        with gr.Tab("🔮 - Voice Conversion"):
+            with gr.Row():
+                 swap_audio_filename = gr.Audio(label="Input audio.wav to swap voice", source="upload", type="filepath")
+            with gr.Row():
+                 with gr.Column():
+                     swap_tokenizer_lang = gr.Dropdown(tokenizer_language_list, label="Base Language Tokenizer", value=tokenizer_language_list[1])
+                     swap_seed = gr.Number(label="Seed (default -1 = Random)", precision=0, value=-1)
+                 with gr.Column():
+                     speaker_swap = gr.Dropdown(speakers_list, value=speakers_list[0], label="Voice (Choose “file” if you wanna use the custom voice)")
+                     swap_batchcount = gr.Number(label="Batch count", precision=0, value=1)
+            with gr.Row():
+                swap_voice_button = gr.Button("Generate", variant="primary")
+            with gr.Row():
+                output_swap = gr.Audio(label="Generated Audio", type="filepath")
+
    
-    with gr.Row().style(equal_height=True):
-        inp5 = gr.Audio(label="Upload Reference Audio for Voice Cloning Here")
-        inp6 = out1
-        inp7 = out1
-
-        btn = gr.Button("Generate using YourTTS")
-        out2 = gr.Audio(label="Generated Audio in a Custom Voice")
-
-    btn.click(voice_conversion, [inp5, inp6, inp7], [out2])
-
-    gr.Examples(examples=examples1, fn=voice_conversion, inputs=[inp5, inp6, inp7],
-                outputs=[out2], cache_examples=True)
-    
-    gr.Markdown(
-            """ ### <center>NOTE: Please do not generate any audio that is potentially harmful to any person or organization❗</center>
-                        
-        """
-    )
-    gr.Markdown(
-            """ 
-### <center>😄 - You may also apply [VoiceFixer](https://huggingface.co/spaces/Kevin676/VoiceFixer) to the generated audio in order to enhance the speech.</center>
-## 🌎 Foreign Language
-Bark supports various languages out-of-the-box and automatically determines language from input text. \
-When prompted with code-switched text, Bark will even attempt to employ the native accent for the respective languages in the same voice.
-Try the prompt:
-```
-Buenos días Miguel. Tu colega piensa que tu alemán es extremadamente malo. But I suppose your english isn't terrible.
-```
-## 🤭 Non-Speech Sounds
-Below is a list of some known non-speech sounds, but we are finding more every day. \
-Please let us know if you find patterns that work particularly well on Discord!
-* [laughter]
-* [laughs]
-* [sighs]
-* [music]
-* [gasps]
-* [clears throat]
-* — or ... for hesitations
-* ♪ for song lyrics
-* capitalization for emphasis of a word
-* MAN/WOMAN: for bias towards speaker
-Try the prompt:
-```
-" [clears throat] Hello, my name is Suno. And, uh — and I like pizza. [laughs] But I also have other interests such as... ♪ singing ♪."
-```
-## 🎶 Music
-Bark can generate all types of audio, and, in principle, doesn't see a difference between speech and music. \
-Sometimes Bark chooses to generate text as music, but you can help it out by adding music notes around your lyrics.
-Try the prompt:
-```
-♪ In the jungle, the mighty jungle, the lion barks tonight ♪
-```
-## 🧬 Voice Cloning
-Bark has the capability to fully clone voices - including tone, pitch, emotion and prosody. \
-The model also attempts to preserve music, ambient noise, etc. from input audio. \
-However, to mitigate misuse of this technology, we limit the audio history prompts to a limited set of Suno-provided, fully synthetic options to choose from.
-## 👥 Speaker Prompts
-You can provide certain speaker prompts such as NARRATOR, MAN, WOMAN, etc. \
-Please note that these are not always respected, especially if a conflicting audio history prompt is given.
-Try the prompt:
-```
-WOMAN: I would like an oatmilk latte please.
-MAN: Wow, that's expensive!
-```
-## Details
-Bark model by [Suno](https://suno.ai/), including official [code](https://github.com/suno-ai/bark) and model weights. \
-Gradio demo supported by 🤗 Hugging Face. Bark is licensed under a non-commercial license: CC-BY 4.0 NC, see details on [GitHub](https://github.com/suno-ai/bark).
-                        
-        """
-    )
-    
+        quick_gen_checkbox.change(fn=on_quick_gen_changed, inputs=quick_gen_checkbox, outputs=complete_settings)
+        convert_to_ssml_button.click(convert_text_to_ssml, inputs=[input_text, speaker],outputs=input_text)
+        gen_click = tts_create_button.click(generate_text_to_speech, inputs=[input_text, speaker, text_temp, waveform_temp, eos_prob, quick_gen_checkbox, complete_settings, seedcomponent, batchcount],outputs=output_audio)
+        button_stop_generation.click(fn=None, inputs=None, outputs=None, cancels=[gen_click])
         
-    gr.HTML('''
-        <div class="footer">
-                    <p>🎶🖼️🎡 - It’s the intersection of technology and liberal arts that makes our hearts sing — Steve Jobs
-                    </p>
-        </div>
-    ''')     
 
-demo.queue().launch(show_error=True)
+
+        swap_voice_button.click(swap_voice_from_audio, inputs=[swap_audio_filename, speaker_swap, swap_tokenizer_lang, swap_seed, swap_batchcount], outputs=output_swap)
+        clone_voice_button.click(clone_voice, inputs=[input_audio_filename, output_voice], outputs=[dummy, npz_file])
+
+
+        restart_server = False
+        try:
+            barkgui.queue().launch(show_error=True)
+        except:
+            restart_server = True
+            run_server = False
+        try:
+            while restart_server == False:
+                time.sleep(1.0)
+        except (KeyboardInterrupt, OSError):
+            print("Keyboard interruption in main thread... closing server.")
+            run_server = False
+        barkgui.close()
+
