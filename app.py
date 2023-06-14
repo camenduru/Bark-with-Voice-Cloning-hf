@@ -31,7 +31,6 @@ from training.train import training_prepare_files, train
 
 settings = Settings('config.yaml')
 
-
 def generate_text_to_speech(text, selected_speaker, text_temp, waveform_temp, eos_prob, quick_generation, complete_settings, seed, batchcount, progress=gr.Progress(track_tqdm=True)):
     # Chunk the text into smaller pieces then combine the generated audio
 
