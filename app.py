@@ -11,7 +11,6 @@ import torch
 import pytorch_seed
 import time
 
-
 from xml.sax import saxutils
 from bark.api import generate_with_settings
 from bark.api import save_as_prompt
