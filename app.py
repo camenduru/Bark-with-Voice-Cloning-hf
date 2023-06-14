@@ -17,7 +17,6 @@ from bark.api import save_as_prompt
 from util.settings import Settings
 #import nltk
 
-
 from bark import SAMPLE_RATE
 from cloning.clonevoice import clone_voice
 from bark.generation import SAMPLE_RATE, preload_models, _load_history_prompt, codec_decode
@@ -222,9 +221,9 @@ def create_version_html():
     python_version = ".".join([str(x) for x in sys.version_info[0:3]])
     versions_html = f"""
 python: <span title="{sys.version}">{python_version}</span>
- • 
+ • 
 torch: {getattr(torch, '__long_version__',torch.__version__)}
- • 
+ • 
 gradio: {gr.__version__}
 """
     return versions_html
