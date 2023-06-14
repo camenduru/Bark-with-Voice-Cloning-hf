@@ -35,4 +35,4 @@ VOLUME /bark/.cache/huggingface/hub
 EXPOSE 7860/tcp
 
 # Start script
-CMD python3 webui.py
+CMD python3 app.py
