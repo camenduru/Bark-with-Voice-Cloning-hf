@@ -1,4 +1,4 @@
-fairseq; platform_system != "Windows"
+#fairseq; platform_system != "Windows"
 fairseq@https://github.com/Sharrnah/fairseq/releases/download/v0.12.4/fairseq-0.12.4-cp310-cp310-win_amd64.whl; platform_system == "Windows"
 audiolm-pytorch
 gradio
