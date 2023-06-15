@@ -239,10 +239,11 @@ autolaunch = False
 if len(sys.argv) > 1:
     autolaunch = "-autolaunch" in sys.argv
 
+torch.cuda.is_available() = False # running on CPU
 
 if torch.cuda.is_available() == False:
     os.environ['BARK_FORCE_CPU'] = 'True'
-    logger.warning("No CUDA detected, fallback to CPU!")
+#    logger.warning("No CUDA detected, fallback to CPU!")
 
 print(f'smallmodels={os.environ.get("SUNO_USE_SMALL_MODELS", False)}')
 print(f'enablemps={os.environ.get("SUNO_ENABLE_MPS", False)}')
