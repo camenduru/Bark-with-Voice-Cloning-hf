@@ -1,11 +1,2 @@
 
-audiolm-pytorch
 gradio
-funcy
-linkify
-mutagen
-pytorch_seed
-pyyaml
-sentencepiece
-
-transformers
