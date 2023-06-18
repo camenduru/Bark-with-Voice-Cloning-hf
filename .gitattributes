@@ -38,3 +38,7 @@ nana_longest_vocal.wav filter=lfs diff=lfs merge=lfs -text
 test.wav filter=lfs diff=lfs merge=lfs -text
 reference.wav filter=lfs diff=lfs merge=lfs -text
 ref.wav filter=lfs diff=lfs merge=lfs -text
+DeepFilterNet2/checkpoints/model_96.ckpt.best filter=lfs diff=lfs merge=lfs -text
+samples/dkitchen.wav filter=lfs diff=lfs merge=lfs -text
+samples/nriver.wav filter=lfs diff=lfs merge=lfs -text
+samples/scafe.wav filter=lfs diff=lfs merge=lfs -text
