@@ -134,7 +134,7 @@ def demo_fn(speech_upl: str, noise_type: str, snr: int, mic_input: str):
     snr = int(snr)
     noise_fn = NOISES[noise_type]
     meta = AudioMetaData(-1, -1, -1, -1, "")
-    max_s = 10  # limit to 10 seconds
+    max_s = 1000  # limit to 10 seconds
     if speech_upl is not None:
         sample, meta = load_audio(speech_upl, sr)
         max_len = max_s * sr
@@ -164,8 +164,6 @@ def demo_fn(speech_upl: str, noise_type: str, snr: int, mic_input: str):
         enhanced = resample(enhanced, sr, meta.sample_rate)
         sample = resample(sample, sr, meta.sample_rate)
         sr = meta.sample_rate
-    noisy_wav = tempfile.NamedTemporaryFile(suffix="noisy.wav", delete=False).name
-    save_audio(noisy_wav, sample, sr)
     enhanced_wav = tempfile.NamedTemporaryFile(suffix="enhanced.wav", delete=False).name
     save_audio(enhanced_wav, enhanced, sr)
     logger.info(f"saved audios: {noisy_wav}, {enhanced_wav}")
@@ -173,7 +171,7 @@ def demo_fn(speech_upl: str, noise_type: str, snr: int, mic_input: str):
     ax_enh.clear()
     # noisy_wav = gr.make_waveform(noisy_fn, bar_count=200)
     # enh_wav = gr.make_waveform(enhanced_fn, bar_count=200)
-    return noisy_wav, enhanced_wav
+    return enhanced_wav
 
 
 def specshow(
@@ -625,10 +623,9 @@ while run_server:
                         ),
                         mic_input,
                     ]
-                    btn_denoise = gr.Button("Denoise")
+                    btn_denoise = gr.Button("Denoise", variant="primary")
                 with gr.Column():
                     outputs = [
-                        gr.Audio(type="filepath", label="Noisy audio"),
                         gr.Audio(type="filepath", label="Enhanced audio"),
                     ]
             btn_denoise.click(fn=demo_fn, inputs=inputs, outputs=outputs)
