@@ -11,3 +11,8 @@ sentencepiece
 soundfile; platform_system == "Windows"
 sox; platform_system != "Windows"
 transformers
+torch
+torchaudio
+deepfilternet
+matplotlib
+Pillow
