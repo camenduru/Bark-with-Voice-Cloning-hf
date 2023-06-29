@@ -166,7 +166,7 @@ def demo_fn(speech_upl: str, noise_type: str, snr: int, mic_input: str):
         sr = meta.sample_rate
     enhanced_wav = tempfile.NamedTemporaryFile(suffix="enhanced.wav", delete=False).name
     save_audio(enhanced_wav, enhanced, sr)
-    logger.info(f"saved audios: {noisy_wav}, {enhanced_wav}")
+    logger.info(f"saved audios: {enhanced_wav}")
     ax_noisy.clear()
     ax_enh.clear()
     # noisy_wav = gr.make_waveform(noisy_fn, bar_count=200)
