@@ -542,20 +542,13 @@ while run_server:
     # Create Gradio Blocks
 
     with gr.Blocks(title=f"{APPTITLE}", mode=f"{APPTITLE}", theme=settings.selected_theme) as barkgui:
-        gr.Markdown("# <center>🐶🎶⭐ - Bark Voice Cloning</center>")
-        gr.Markdown("## <center>🤗 - If you like this space, please star my [github repo](https://github.com/KevinWang676/Bark-Voice-Cloning)</center>")
-        gr.Markdown("### <center>🎡 - Based on [bark-gui](https://github.com/C0untFloyd/bark-gui)</center>")
-        gr.Markdown(f""" You can duplicate and use it with a GPU: <a href="https://huggingface.co/spaces/{os.getenv('SPACE_ID')}?duplicate=true"><img style="display: inline; margin-top: 0em; margin-bottom: 0em" src="https://bit.ly/3gLdBN6" alt="Duplicate Space" /></a>
-                         or open in [Colab](https://colab.research.google.com/github/KevinWang676/Bark-Voice-Cloning/blob/main/Bark_Voice_Cloning.ipynb) for quick start 🌟 P.S. Voice cloning needs a GPU, but TTS doesn't 😄
-                    """)
-
         with gr.Tab("🎙️ - Clone Voice"):
             with gr.Row():
                 input_audio_filename = gr.Audio(label="Input audio.wav", source="upload", type="filepath")
             #transcription_text = gr.Textbox(label="Transcription Text", lines=1, placeholder="Enter Text of your Audio Sample here...")
             with gr.Row():
                 with gr.Column():
-                    initialname = "/home/user/app/bark/assets/prompts/file"
+                    initialname = "/content/Bark-with-Voice-Cloning-hf/bark/assets/prompts/file"
                     output_voice = gr.Textbox(label="Filename of trained Voice (do not change the initial name)", lines=1, placeholder=initialname, value=initialname, visible=False)
                 with gr.Column():
                     tokenizerlang = gr.Dropdown(tokenizer_language_list, label="Base Language Tokenizer", value=tokenizer_language_list[1], visible=False)
